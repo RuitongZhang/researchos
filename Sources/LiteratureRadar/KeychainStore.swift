@@ -52,17 +52,18 @@ enum KeychainStore {
             return
         }
         let data = Data(key.utf8)
+        let deleteStatus = SecItemDelete(baseQuery(service: service) as CFDictionary)
+        if deleteStatus != errSecSuccess && deleteStatus != errSecItemNotFound {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(deleteStatus))
+        }
+
         var query = baseQuery(service: service)
-        let attributes: [String: Any] = [kSecValueData as String: data]
-        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if status == errSecItemNotFound {
-            query[kSecValueData as String] = data
-            let addStatus = SecItemAdd(query as CFDictionary, nil)
-            guard addStatus == errSecSuccess else {
-                throw NSError(domain: NSOSStatusErrorDomain, code: Int(addStatus))
-            }
-        } else if status != errSecSuccess {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        query[kSecValueData as String] = data
+        query[kSecAttrLabel as String] = service
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let addStatus = SecItemAdd(query as CFDictionary, nil)
+        guard addStatus == errSecSuccess else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(addStatus))
         }
     }
 

@@ -67,6 +67,17 @@ final class WorkerClient: Sendable {
         var environment = ProcessInfo.processInfo.environment
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         environment["PYTHONUNBUFFERED"] = "1"
+        if needsDeepSeekKeys(for: command) {
+            let readerKey = KeychainStore.loadReaderKey()
+            if !readerKey.isEmpty {
+                environment["DEEPSEEK_READER_API_KEY"] = readerKey
+                environment["DEEPSEEK_API_KEY"] = readerKey
+            }
+            let flashKey = KeychainStore.loadFlashKey()
+            if !flashKey.isEmpty {
+                environment["DEEPSEEK_FLASH_API_KEY"] = flashKey
+            }
+        }
         process.environment = environment
 
         let stdinPipe = Pipe()
@@ -125,10 +136,15 @@ final class WorkerClient: Sendable {
     }
 
     private static func workerURL() throws -> URL {
-        let resourceRoot = Bundle.module.resourceURL
+        let mainBundle = Bundle.main
+        let resourceRoot = mainBundle.resourceURL
+        let executableRoot = mainBundle.executableURL?.deletingLastPathComponent()
         let candidates = [
+            resourceRoot?.appendingPathComponent("LiteratureRadar_LiteratureRadar.bundle/Resources/worker/litradar.py"),
             resourceRoot?.appendingPathComponent("Resources/worker/litradar.py"),
             resourceRoot?.appendingPathComponent("worker/litradar.py"),
+            executableRoot?.appendingPathComponent("LiteratureRadar_LiteratureRadar.bundle/Resources/worker/litradar.py"),
+            executableRoot?.appendingPathComponent("../Resources/LiteratureRadar_LiteratureRadar.bundle/Resources/worker/litradar.py"),
             URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
                 .appendingPathComponent("Sources/LiteratureRadar/Resources/worker/litradar.py")
         ].compactMap { $0 }
@@ -137,6 +153,15 @@ final class WorkerClient: Sendable {
             return candidate
         }
         throw WorkerClientError.missingWorker
+    }
+
+    private static func needsDeepSeekKeys(for command: String) -> Bool {
+        [
+            "profile-from-description",
+            "usefulness",
+            "synthesize",
+            "integrate-papers"
+        ].contains(command)
     }
 
     private static func pythonInvocation() -> (executable: URL, argumentsPrefix: [String]) {

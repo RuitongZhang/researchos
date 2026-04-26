@@ -152,6 +152,13 @@ enum L10n {
         "Zotero export tutorial": "Zotero 导出教程",
         "In Zotero, select papers, choose File > Export Items..., pick RIS, BibTeX, or CSL JSON, then import that file here.": "在 Zotero 中选中文献，点击 File > Export Items...，选择 RIS、BibTeX 或 CSL JSON，然后在这里导入该文件。",
         "In Zotero, select papers, choose File > Export Items..., pick BibTeX, RIS, or CSL JSON. If Zotero creates a folder with a .bib file plus a files/ PDF folder, you can select either the folder or the .bib file here.": "在 Zotero 中选中文献，点击 File > Export Items...，选择 BibTeX、RIS 或 CSL JSON。如果 Zotero 生成了一个包含 .bib 文件和 files/ PDF 文件夹的导出文件夹，这里既可以选择该文件夹，也可以选择里面的 .bib 文件。",
-        "Initializing local database only. Use Demo or Run Radar after the app opens.": "仅初始化本地数据库。打开后可点击“示例”或“运行雷达”。"
+        "Initializing local database only. Use Demo or Run Radar after the app opens.": "仅初始化本地数据库。打开后可点击“示例”或“运行雷达”。",
+
+        "Research OS": "科研操作系统",
+        "Memory OS": "记忆操作系统",
+        "Rebuilding knowledge tree": "重建知识树",
+        "Assembling context packet": "组装工作记忆包",
+        "Inspecting memory": "检查记忆系统",
+        "Repairing memory": "修复记忆系统",
     ]
 }

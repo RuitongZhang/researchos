@@ -3,7 +3,7 @@ import SwiftUI
 
 @MainActor
 final class AppViewModel: ObservableObject {
-    @Published var selectedSection: AppSection = .radar
+    @Published var selectedSection: AppSection = .overview
     @Published var language: AppLanguage {
         didSet {
             UserDefaults.standard.set(language.rawValue, forKey: "appLanguage")
@@ -14,6 +14,11 @@ final class AppViewModel: ObservableObject {
     @Published var readPapers: [Paper] = []
     @Published var profiles: [ResearchProfile] = []
     @Published var memoryNotes: [MemoryNote] = []
+    @Published var memoryDashboard: MemoryDashboard?
+    @Published var mindMap: MindMapResponse?
+    @Published var reviewItems: [ReviewItem] = []
+    @Published var contextPacket: ContextPacketResponse?
+    @Published var contextQuery: String = ""
     @Published var selectedMemoryNoteID: String?
     @Published var selectedMemoryNote: MemoryNote?
     @Published var isLoadingMemoryNote: Bool = false
@@ -48,6 +53,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private nonisolated let worker = WorkerClient()
+    private var didLoadDeepSeekKeyDrafts = false
 
     var isIntegratingMemory: Bool {
         if let integrationProgress {
@@ -58,10 +64,10 @@ final class AppViewModel: ObservableObject {
 
     init() {
         let rawLanguage = UserDefaults.standard.string(forKey: "appLanguage")
-        let initialLanguage = AppLanguage(rawValue: rawLanguage ?? "") ?? .english
+        let initialLanguage = AppLanguage(rawValue: rawLanguage ?? "") ?? .simplifiedChinese
         self.language = initialLanguage
-        self.readerAPIKeyDraft = KeychainStore.loadReaderKey()
-        self.flashAPIKeyDraft = KeychainStore.loadFlashKey()
+        self.readerAPIKeyDraft = ""
+        self.flashAPIKeyDraft = ""
         self.statusLine = L10n.text("Ready", initialLanguage)
         self.showStatusHints = UserDefaults.standard.bool(forKey: "showStatusHints")
         let savedFontSize = UserDefaults.standard.double(forKey: "fontSize")
@@ -131,6 +137,19 @@ final class AppViewModel: ObservableObject {
             timeout: 15
         )
         readPapers = readResponse.papers
+        let dashboardResponse: MemoryDashboardResponse = try await worker.run(
+            "memory-dashboard",
+            payload: ["profile_id": selectedProfileID ?? ""],
+            timeout: 15
+        )
+        memoryDashboard = dashboardResponse.dashboard
+        mindMap = try await worker.run(
+            "mind-map",
+            payload: ["profile_id": selectedProfileID ?? ""],
+            timeout: 15
+        )
+        let reviewResponse: ReviewQueueResponse = try await worker.run("review-list", timeout: 15)
+        reviewItems = reviewResponse.items
     }
 
     func ingestDemo() async {
@@ -372,10 +391,18 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    func loadDeepSeekKeyDraftsForEditing() {
+        guard !didLoadDeepSeekKeyDrafts else { return }
+        readerAPIKeyDraft = KeychainStore.loadReaderKey()
+        flashAPIKeyDraft = KeychainStore.loadFlashKey()
+        didLoadDeepSeekKeyDrafts = true
+    }
+
     func saveDeepSeekKeys() {
         do {
             try KeychainStore.saveReaderKey(readerAPIKeyDraft)
             try KeychainStore.saveFlashKey(flashAPIKeyDraft)
+            didLoadDeepSeekKeyDrafts = true
             statusLine = t("DeepSeek keys saved to Keychain.")
         } catch {
             statusLine = "Could not save key: \(error.localizedDescription)"
@@ -472,6 +499,55 @@ final class AppViewModel: ObservableObject {
             selectedZoteroPaperIDs.insert(paperID)
         } else {
             selectedZoteroPaperIDs.remove(paperID)
+        }
+    }
+
+    func refreshMemoryOS() async {
+        await runBusy("Refreshing") { [self] in
+            try await self.refreshAll()
+        }
+    }
+
+    func rebuildKnowledgeTree() async {
+        await runBusy("Rebuilding knowledge tree") { [self] in
+            let _: WorkerMessage = try await self.worker.run(
+                "rebuild-taxonomy",
+                payload: ["profile_id": self.selectedProfileID ?? ""],
+                timeout: 30
+            )
+            try await self.refreshAll()
+        }
+    }
+
+    func buildContextPacket() async {
+        let query = contextQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            statusLine = t("Enter a query first.")
+            return
+        }
+        await runBusy("Assembling context packet") { [self] in
+            let response: ContextPacketResponse = try await self.worker.run(
+                "context-packet",
+                payload: [
+                    "query": query,
+                    "task": "research_assistant",
+                    "profile_id": self.selectedProfileID ?? ""
+                ],
+                timeout: 30
+            )
+            self.contextPacket = response
+            try await self.refreshAll()
+        }
+    }
+
+    func repairMemory(apply: Bool = false) async {
+        await runBusy(apply ? "Repairing memory" : "Inspecting memory") { [self] in
+            let _: WorkerMessage = try await self.worker.run(
+                "repair-memory",
+                payload: ["apply": apply],
+                timeout: 30
+            )
+            try await self.refreshAll()
         }
     }
 

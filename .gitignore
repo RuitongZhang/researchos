@@ -1,6 +1,7 @@
 .build/
 .swiftpm/
 DerivedData/
+dist/
 __pycache__/
 *.pyc
 *.sqlite3
