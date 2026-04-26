@@ -64,9 +64,9 @@ struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
-                Label("Research OS", systemImage: "brain.head.profile")
+                Label(model.t("Research OS"), systemImage: "brain.head.profile")
                     .font(.title3.weight(.semibold))
-                Text("Literature Radar + Memory OS")
+                Text(model.t("Literature Radar + Memory OS"))
                     .foregroundStyle(.secondary)
                     .font(.caption)
             }
@@ -105,28 +105,28 @@ struct OverviewView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 PageHeader(
-                    title: "Research Memory Operating System",
-                    subtitle: "把雷达、深读、证据、知识图谱、兴趣、insight 和方法论连接成一个可追踪的科研心智系统。",
+                    title: model.t("Research Memory Operating System"),
+                    subtitle: model.t("Connect radar, deep reading, evidence, knowledge graph, interest, insights, and methods into a traceable research memory system."),
                     icon: "sparkles.rectangle.stack"
                 )
                 DashboardCards(model: model)
                 HStack(alignment: .top, spacing: 16) {
-                    GlassCard(title: "下一步工作流", systemImage: "arrow.triangle.branch") {
+                    GlassCard(title: model.t("Next Workflow"), systemImage: "arrow.triangle.branch") {
                         VStack(alignment: .leading, spacing: 12) {
-                            WorkflowStep(number: "1", title: "雷达发现", detail: "搜索/浅读只写入事件层和兴趣状态，不污染事实知识。")
-                            WorkflowStep(number: "2", title: "DeepSeek 深读", detail: "深读后生成 MemoryChangeSet、证据片段、原子知识和 insight。")
-                            WorkflowStep(number: "3", title: "巩固与纠错", detail: "高风险变更进 review queue；所有写入都有 provenance 和回滚线索。")
+                            WorkflowStep(number: "1", title: model.t("Radar Discovery"), detail: model.t("Search and shallow reading only write events and interest states, without polluting factual knowledge."))
+                            WorkflowStep(number: "2", title: model.t("DeepSeek Deep Read"), detail: model.t("Deep reading creates MemoryChangeSet, evidence spans, atomic knowledge, and insights."))
+                            WorkflowStep(number: "3", title: model.t("Consolidate and Repair"), detail: model.t("High-risk changes enter the review queue; every write keeps provenance and rollback clues."))
                         }
                     }
                     .frame(maxWidth: .infinity)
 
-                    GlassCard(title: "近期候选", systemImage: "doc.text.magnifyingglass") {
+                    GlassCard(title: model.t("Recent Candidates"), systemImage: "doc.text.magnifyingglass") {
                         VStack(spacing: 10) {
                             ForEach(model.displayedRadarPapers.prefix(5)) { paper in
-                                CompactPaperRow(paper: paper)
+                                CompactPaperRow(model: model, paper: paper)
                             }
                             if model.papers.isEmpty {
-                                EmptyHint(text: "还没有论文。先加载 Demo 或运行雷达。")
+                                EmptyHint(text: model.t("No papers yet. Open Today Radar or run Radar first."))
                             }
                         }
                     }
@@ -143,10 +143,10 @@ struct DashboardCards: View {
     var body: some View {
         let dashboard = model.memoryDashboard
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 4), spacing: 14) {
-            StatCard(title: "Papers", value: "\(dashboard?.counts["papers"] ?? model.papers.count)", caption: "本地候选库", icon: "doc.text")
-            StatCard(title: "Knowledge Nodes", value: "\(dashboard?.counts["knowledge_nodes"] ?? 0)", caption: "结构化知识节点", icon: "circle.hexagongrid")
-            StatCard(title: "Evidence", value: "\(dashboard?.counts["evidence_spans"] ?? 0)", caption: "可回溯证据片段", icon: "quote.bubble")
-            StatCard(title: "Health", value: "\(Int(((dashboard?.health.score ?? 1.0) * 100).rounded()))%", caption: "记忆健康度", icon: "heart.text.square")
+            StatCard(title: model.t("Papers"), value: "\(dashboard?.counts["papers"] ?? model.papers.count)", caption: model.t("Local candidate library"), icon: "doc.text")
+            StatCard(title: model.t("Knowledge Nodes"), value: "\(dashboard?.counts["knowledge_nodes"] ?? 0)", caption: model.t("Structured knowledge nodes"), icon: "circle.hexagongrid")
+            StatCard(title: model.t("Evidence"), value: "\(dashboard?.counts["evidence_spans"] ?? 0)", caption: model.t("Traceable evidence spans"), icon: "quote.bubble")
+            StatCard(title: model.t("Health"), value: "\(Int(((dashboard?.health.score ?? 1.0) * 100).rounded()))%", caption: model.t("Memory health"), icon: "heart.text.square")
         }
     }
 }
@@ -156,7 +156,7 @@ struct RadarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PageHeader(title: model.t("Today Radar"), subtitle: model.t("Ranked candidates from local memory and official APIs."), icon: "dot.radiowaves.left.and.right")
+            PageHeader(title: model.t("Today Radar"), subtitle: model.t("Prioritizes newly found online papers you have not read; local papers are only shown as a small supplement."), icon: "dot.radiowaves.left.and.right")
             ToolbarCard {
                 ProfilePicker(model: model)
                 Picker(model.t("Sort by"), selection: $model.radarSortMode) {
@@ -166,12 +166,12 @@ struct RadarView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 190)
                 Spacer()
-                AsyncButton(title: model.t("Demo"), systemImage: "sparkles") { await model.ingestDemo() }
                 AsyncButton(title: model.t("Run Radar"), systemImage: "antenna.radiowaves.left.and.right") { await model.runRadar() }
                 AsyncButton(title: model.t("Refresh"), systemImage: "arrow.clockwise") { await model.refreshMemoryOS() }
             }
             PaperListView(model: model, papers: model.displayedRadarPapers)
         }
+        .task { await model.ensureRadarHasOnlineCandidates() }
     }
 }
 
@@ -190,7 +190,7 @@ struct SearchLabView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 180)
-                Toggle(model.t("Live APIs"), isOn: $model.useLiveAPIs)
+                Toggle(model.t("Search online"), isOn: $model.useLiveAPIs)
                 AsyncButton(title: model.t("Search"), systemImage: "magnifyingglass") { await model.runSearch() }
             }
             PaperListView(model: model, papers: model.searchResults)
@@ -227,10 +227,10 @@ struct PaperCard: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 8) {
-                            Badge(paper.sourceLabel)
-                            Badge(paper.dateLabel)
-                            if let status = paper.analysisStatus { Badge(status) }
-                            if paper.isRead { Badge("read") }
+                            Badge(paper.isLocalSource ? model.t("Local") : paper.sourceLabel, color: paper.isLocalSource ? .green : .accentColor)
+                            Badge(paper.publishedDate ?? paper.updatedDate ?? model.t("No date"))
+                            if let status = paper.analysisStatus { Badge(model.t(status)) }
+                            if paper.isRead { Badge(model.t("read")) }
                         }
                         Text(paper.title)
                             .font(.headline)
@@ -243,7 +243,7 @@ struct PaperCard: View {
                     VStack(alignment: .trailing, spacing: 4) {
                         Text(paper.finalScorePercent)
                             .font(.title3.weight(.semibold))
-                        Text(paper.score?.reason ?? "local")
+                        Text(model.t(paper.score?.reason ?? "local"))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -258,7 +258,7 @@ struct PaperCard: View {
                     AsyncButton(title: model.t("Analyze"), systemImage: "bolt") { await model.analyze(paper) }
                     AsyncButton(title: model.t("Assess usefulness"), systemImage: "brain") { await model.assessUsefulness(paper) }
                     if let url = paper.url, let link = URL(string: url) {
-                        Link("Open", destination: link)
+                        Link(model.t("Open"), destination: link)
                     }
                     Spacer()
                 }
@@ -269,6 +269,7 @@ struct PaperCard: View {
 }
 
 struct CompactPaperRow: View {
+    @ObservedObject var model: AppViewModel
     var paper: Paper
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -276,7 +277,7 @@ struct CompactPaperRow: View {
                 .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 4) {
                 Text(paper.title).font(.subheadline.weight(.medium)).lineLimit(2)
-                Text("\(paper.sourceLabel) · \(paper.dateLabel) · \(paper.finalScorePercent)")
+                Text("\(paper.sourceLabel) · \(paper.publishedDate ?? paper.updatedDate ?? model.t("No date")) · \(paper.finalScorePercent)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -289,38 +290,64 @@ struct ProfilesView: View {
     @ObservedObject var model: AppViewModel
     @State private var draft = ResearchProfile.empty
     @State private var description = ""
+    @FocusState private var isDescriptionFocused: Bool
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 12) {
                 PageHeader(title: model.t("Research Profiles"), subtitle: "研究方向不仅是关键词，也会驱动雷达、记忆检索、知识树和元认知反思。", icon: "slider.horizontal.3")
-                GlassCard(title: "方向列表", systemImage: "list.bullet.rectangle") {
-                    VStack(spacing: 8) {
-                        ForEach(model.profiles) { profile in
-                            Button {
-                                model.selectedProfileID = profile.id
-                                draft = profile
-                                Task { try? await model.refreshAll() }
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading) {
-                                        Text(profile.name).font(.headline)
-                                        Text(profile.includeTerms.prefix(5).joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
+                GlassCard(title: model.t("Profile List"), systemImage: "list.bullet.rectangle") {
+                    ScrollView {
+                        VStack(spacing: 6) {
+                            ForEach(model.profiles) { profile in
+                                Button {
+                                    model.selectedProfileID = profile.id
+                                    draft = profile
+                                    Task { try? await model.refreshAll() }
+                                } label: {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 5) {
+                                            Text(profile.name).font(.headline)
+                                            Text(profile.includeTerms.prefix(5).joined(separator: ", "))
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(2)
+                                        }
+                                        Spacer()
+                                        if model.selectedProfileID == profile.id { Image(systemName: "checkmark.circle.fill") }
                                     }
-                                    Spacer()
-                                    if model.selectedProfileID == profile.id { Image(systemName: "checkmark.circle.fill") }
+                                    .padding(.vertical, 10)
+                                    .padding(.horizontal, 8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                                    .background(model.selectedProfileID == profile.id ? Color.accentColor.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
                                 }
+                                .buttonStyle(.plain)
+                                Divider()
                             }
-                            .buttonStyle(.plain)
-                            Divider()
                         }
+                    }
+                    .frame(minHeight: isDescriptionFocused ? 160 : 300, maxHeight: isDescriptionFocused ? 220 : 380)
+                    HStack {
+                        Spacer()
                         AsyncButton(title: model.t("New Profile"), systemImage: "plus") { await model.createProfile() }
+                        Spacer()
                     }
                 }
                 GlassCard(title: model.t("Generate Profile"), systemImage: "wand.and.stars") {
                     VStack(alignment: .leading, spacing: 10) {
-                        TextEditor(text: $description).frame(minHeight: 90)
+                        TextEditor(text: $description)
+                            .focused($isDescriptionFocused)
+                            .frame(height: isDescriptionFocused ? 360 : 92)
                         AsyncButton(title: model.t("Generate Profile"), systemImage: "sparkles") { await model.createProfileFromDescription(description) }
+                        if let progress = model.profileGenerationProgress {
+                            WorkflowProgressPanel(
+                                model: model,
+                                title: model.t("Profile Generation Progress"),
+                                progress: progress,
+                                phases: ["preparing", "calling_llm", "saving", "done"]
+                            )
+                        }
                     }
                 }
             }
@@ -343,11 +370,11 @@ struct ProfileEditor: View {
                 VStack(alignment: .leading, spacing: 14) {
                     TextField(model.t("Name"), text: $profile.name)
                     Slider(value: $profile.weight, in: 0.1...2.0) { Text(model.t("Weight")) }
-                    ProfileField(title: model.t("Include terms"), values: $profile.includeTerms)
-                    ProfileField(title: model.t("Exclude terms"), values: $profile.excludeTerms)
-                    ProfileField(title: model.t("Seed papers"), values: $profile.seedPapers)
-                    ProfileField(title: model.t("Watch authors"), values: $profile.watchAuthors)
-                    ProfileField(title: model.t("Watch labs"), values: $profile.watchLabs)
+                    ProfileField(model: model, title: model.t("Include terms"), values: $profile.includeTerms)
+                    ProfileField(model: model, title: model.t("Exclude terms"), values: $profile.excludeTerms)
+                    ProfileField(model: model, title: model.t("Seed papers"), values: $profile.seedPapers)
+                    ProfileField(model: model, title: model.t("Watch authors"), values: $profile.watchAuthors)
+                    ProfileField(model: model, title: model.t("Watch labs"), values: $profile.watchLabs)
                     TextField(model.t("arXiv query"), text: $profile.arxivQuery)
                     TextField(model.t("bioRxiv query"), text: $profile.biorxivQuery)
                     HStack {
@@ -363,6 +390,7 @@ struct ProfileEditor: View {
 }
 
 struct ProfileField: View {
+    @ObservedObject var model: AppViewModel
     var title: String
     @Binding var values: [String]
     @State private var newValue = ""
@@ -378,8 +406,8 @@ struct ProfileField: View {
                 }
             }
             HStack {
-                TextField(modelessPlaceholder, text: $newValue)
-                Button(modelessAddTitle) {
+                TextField(model.t("Add item"), text: $newValue)
+                Button(model.t("Add")) {
                     let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmed.isEmpty else { return }
                     values.append(trimmed)
@@ -389,29 +417,67 @@ struct ProfileField: View {
         }
     }
 
-    private var modelessPlaceholder: String { "Add item" }
-    private var modelessAddTitle: String { "Add" }
 }
 
 struct MemoryOSView: View {
     @ObservedObject var model: AppViewModel
+    @State private var showGlossary = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PageHeader(title: "Memory OS", subtitle: "证据层、事件层、语义知识图谱、方法论、元认知与工作记忆包。", icon: "brain.head.profile")
+            PageHeader(title: model.t("Memory OS"), subtitle: model.t("Evidence, events, semantic knowledge graph, methods, metacognition, and working memory packets."), icon: "brain.head.profile")
             ToolbarCard {
                 AsyncButton(title: model.t("Refresh"), systemImage: "arrow.clockwise") { await model.refreshMemoryOS() }
-                AsyncButton(title: "重建知识树", systemImage: "point.3.connected.trianglepath.dotted") { await model.rebuildKnowledgeTree() }
-                AsyncButton(title: "检查记忆", systemImage: "stethoscope") { await model.repairMemory(apply: false) }
-                AsyncButton(title: "自动修复", systemImage: "wrench.and.screwdriver") { await model.repairMemory(apply: true) }
+                AsyncButton(title: model.t("Rebuild Knowledge Tree"), systemImage: "point.3.connected.trianglepath.dotted") { await model.rebuildKnowledgeTree() }
+                AsyncButton(title: model.t("Inspect Memory"), systemImage: "stethoscope") { await model.repairMemory(apply: false) }
+                AsyncButton(title: model.t("Auto Repair"), systemImage: "wrench.and.screwdriver") { await model.repairMemory(apply: true) }
+                Button {
+                    showGlossary.toggle()
+                } label: {
+                    Label(model.t("Term Guide"), systemImage: "questionmark.circle")
+                }
+                .popover(isPresented: $showGlossary) {
+                    MemoryGlossaryPanel(model: model)
+                        .padding(16)
+                        .frame(width: 420)
+                }
                 Spacer()
             }
             TabView {
-                MemoryDashboardPanel(model: model).tabItem { Label("Dashboard", systemImage: "gauge.with.dots.needle.67percent") }
-                KnowledgeTreePanel(model: model).tabItem { Label("Knowledge Tree", systemImage: "tree") }
-                ContextPacketPanel(model: model).tabItem { Label("Context Packet", systemImage: "shippingbox") }
-                MemoryNotesPanel(model: model).tabItem { Label("Notes", systemImage: "note.text") }
-                ReviewQueuePanel(model: model).tabItem { Label("Review", systemImage: "checklist") }
+                MemoryDashboardPanel(model: model).tabItem { Label(model.t("Dashboard"), systemImage: "gauge.with.dots.needle.67percent") }
+                KnowledgeTreePanel(model: model).tabItem { Label(model.t("Knowledge Tree"), systemImage: "tree") }
+                ContextPacketPanel(model: model).tabItem { Label(model.t("Context Packet"), systemImage: "shippingbox") }
+                MemoryNotesPanel(model: model).tabItem { Label(model.t("Notes"), systemImage: "note.text") }
+                ReviewQueuePanel(model: model).tabItem { Label(model.t("Review"), systemImage: "checklist") }
+            }
+        }
+    }
+}
+
+struct MemoryGlossaryPanel: View {
+    @ObservedObject var model: AppViewModel
+
+    private var items: [(String, String)] {
+        [
+            ("Evidence", "Short source-backed passages extracted from papers."),
+            ("Knowledge Nodes", "Concepts the app keeps as long-term research knowledge."),
+            ("Knowledge Tree", "A topic hierarchy built from those concepts."),
+            ("Interest States", "A lightweight estimate of what you currently care about."),
+            ("Recent Events", "A log of actions such as reading, saving, feedback, and radar discovery."),
+            ("Context Packet", "A temporary bundle of relevant memory for the current task."),
+            ("Review", "High-risk memory changes that should be checked before trusting them.")
+        ]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(model.t("Term Guide"), systemImage: "questionmark.circle")
+                .font(.headline)
+            ForEach(items, id: \.0) { item in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(model.t(item.0)).font(.subheadline.weight(.semibold))
+                    Text(model.t(item.1)).font(.caption).foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -425,33 +491,33 @@ struct MemoryDashboardPanel: View {
             VStack(alignment: .leading, spacing: 16) {
                 DashboardCards(model: model)
                 HStack(alignment: .top, spacing: 16) {
-                    GlassCard(title: "兴趣状态", systemImage: "flame") {
+                    GlassCard(title: model.t("Interest States"), systemImage: "flame") {
                         FlowLayout(items: model.memoryDashboard?.interests ?? []) { item in
                             InterestChip(interest: item)
                         }
-                        if model.memoryDashboard?.interests.isEmpty ?? true { EmptyHint(text: "还没有浅层兴趣信号。") }
+                        if model.memoryDashboard?.interests.isEmpty ?? true { EmptyHint(text: model.t("No shallow interest signals yet.")) }
                     }
                     .frame(maxWidth: .infinity)
-                    GlassCard(title: "最近事件", systemImage: "clock.arrow.circlepath") {
+                    GlassCard(title: model.t("Recent Events"), systemImage: "clock.arrow.circlepath") {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(model.memoryDashboard?.recentEvents ?? []) { event in
                                 HStack {
-                                    Badge(event.eventType)
-                                    Text(event.objectId ?? event.objectType ?? "event")
+                                    Badge(model.t(event.eventType))
+                                    Text(event.objectId ?? event.objectType ?? model.t("event"))
                                     Spacer()
                                     Text(event.occurredAt ?? "").font(.caption).foregroundStyle(.secondary)
                                 }
                             }
-                            if model.memoryDashboard?.recentEvents.isEmpty ?? true { EmptyHint(text: "还没有事件记忆。") }
+                            if model.memoryDashboard?.recentEvents.isEmpty ?? true { EmptyHint(text: model.t("No event memory yet.")) }
                         }
                     }
                     .frame(maxWidth: .infinity)
                 }
-                GlassCard(title: "系统层级计数", systemImage: "square.stack.3d.up") {
+                GlassCard(title: model.t("System Layer Counts"), systemImage: "square.stack.3d.up") {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 10) {
                         ForEach((model.memoryDashboard?.counts ?? [:]).sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
                             HStack {
-                                Text(key.replacingOccurrences(of: "_", with: " ")).font(.caption)
+                                Text(model.t(key.replacingOccurrences(of: "_", with: " "))).font(.caption)
                                 Spacer()
                                 Text("\(value)").bold()
                             }
@@ -470,21 +536,21 @@ struct KnowledgeTreePanel: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
-            GlassCard(title: "知识树", systemImage: "tree") {
+            GlassCard(title: model.t("Knowledge Tree"), systemImage: "tree") {
                 ScrollView {
                     if let tree = model.mindMap?.tree {
-                        TreeNodeView(node: tree)
+                        TreeNodeView(node: tree, confidenceLabel: model.t("Confidence"))
                     } else {
-                        EmptyHint(text: "暂无知识树。")
+                        EmptyHint(text: model.t("No knowledge tree yet."))
                     }
                 }
             }
             .frame(maxWidth: .infinity)
 
-            GlassCard(title: "图谱概览", systemImage: "network") {
+            GlassCard(title: model.t("Graph Overview"), systemImage: "network") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Nodes: \(model.mindMap?.nodes.count ?? 0)")
-                    Text("Edges: \(model.mindMap?.edges.count ?? 0)")
+                    Text("\(model.t("Nodes")): \(model.mindMap?.nodes.count ?? 0)")
+                    Text("\(model.t("Edges")): \(model.mindMap?.edges.count ?? 0)")
                     Divider()
                     ForEach(Array((model.mindMap?.insights ?? []).prefix(8))) { insight in
                         VStack(alignment: .leading, spacing: 3) {
@@ -493,7 +559,7 @@ struct KnowledgeTreePanel: View {
                         }
                         Divider()
                     }
-                    if model.mindMap?.insights.isEmpty ?? true { EmptyHint(text: "暂无元认知 insight。") }
+                    if model.mindMap?.insights.isEmpty ?? true { EmptyHint(text: model.t("No metacognitive insights yet.")) }
                 }
             }
             .frame(width: 340)
@@ -503,6 +569,7 @@ struct KnowledgeTreePanel: View {
 
 struct TreeNodeView: View {
     var node: KnowledgeTreeNode
+    var confidenceLabel: String
 
     var body: some View {
         if node.children.isEmpty {
@@ -512,7 +579,7 @@ struct TreeNodeView: View {
             DisclosureGroup(isExpanded: .constant(true)) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(node.children) { child in
-                        TreeNodeView(node: child)
+                        TreeNodeView(node: child, confidenceLabel: confidenceLabel)
                             .padding(.leading, 14)
                     }
                 }
@@ -526,7 +593,7 @@ struct TreeNodeView: View {
             Badge(node.kind)
             Text(node.title).font(.callout.weight(.medium))
             if let intensity = node.intensity { Text("\(Int(intensity * 100))%").foregroundStyle(.secondary).font(.caption) }
-            if let confidence = node.confidence { Text("conf \(Int(confidence * 100))%").foregroundStyle(.secondary).font(.caption) }
+            if let confidence = node.confidence { Text("\(confidenceLabel) \(Int(confidence * 100))%").foregroundStyle(.secondary).font(.caption) }
         }
     }
 }
@@ -537,27 +604,27 @@ struct ContextPacketPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             ToolbarCard {
-                TextField("输入当前问题或任务，让系统组装工作记忆包", text: $model.contextQuery)
+                TextField(model.t("Enter the current question or task to assemble a working memory packet"), text: $model.contextQuery)
                     .textFieldStyle(.roundedBorder)
-                AsyncButton(title: "组装 Context Packet", systemImage: "shippingbox") { await model.buildContextPacket() }
+                AsyncButton(title: model.t("Assemble Context Packet"), systemImage: "shippingbox") { await model.buildContextPacket() }
             }
             if let response = model.contextPacket {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        Badge("packet: \(response.contextPacketId)")
-                        ContextSection(title: "Active Direction", values: response.packet.activeResearchDirection.map { [$0] } ?? [])
-                        ContextSection(title: "Semantic", values: response.packet.semanticContext)
-                        ContextSection(title: "Evidence", values: response.packet.evidenceContext)
-                        ContextSection(title: "Episodes", values: response.packet.episodicContext)
-                        ContextSection(title: "Methodology", values: response.packet.methodologyContext)
-                        ContextSection(title: "Metacognition", values: response.packet.metacognitiveContext)
-                        GlassCard(title: "Forbidden Assumptions", systemImage: "exclamationmark.triangle") {
+                        Badge("\(model.t("packet")): \(response.contextPacketId)")
+                        ContextSection(title: model.t("Active Direction"), emptyText: model.t("No entries"), values: response.packet.activeResearchDirection.map { [$0] } ?? [])
+                        ContextSection(title: model.t("Semantic"), emptyText: model.t("No entries"), values: response.packet.semanticContext)
+                        ContextSection(title: model.t("Evidence"), emptyText: model.t("No entries"), values: response.packet.evidenceContext)
+                        ContextSection(title: model.t("Episodes"), emptyText: model.t("No entries"), values: response.packet.episodicContext)
+                        ContextSection(title: model.t("Methodology"), emptyText: model.t("No entries"), values: response.packet.methodologyContext)
+                        ContextSection(title: model.t("Metacognition"), emptyText: model.t("No entries"), values: response.packet.metacognitiveContext)
+                        GlassCard(title: model.t("Forbidden Assumptions"), systemImage: "exclamationmark.triangle") {
                             ForEach(response.packet.forbiddenAssumptions, id: \.self) { Text("• \($0)") }
                         }
                     }
                 }
             } else {
-                EmptyHint(text: "这里会显示一次任务临时激活了哪些语义知识、证据、事件、方法论和元认知。")
+                EmptyHint(text: model.t("This panel shows which semantic knowledge, evidence, events, methods, and metacognition are activated for a task."))
             }
         }
     }
@@ -565,6 +632,7 @@ struct ContextPacketPanel: View {
 
 struct ContextSection: View {
     var title: String
+    var emptyText: String
     var values: [JSONValue]
 
     var body: some View {
@@ -578,7 +646,7 @@ struct ContextSection: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
                 }
-                if values.isEmpty { EmptyHint(text: "No entries") }
+                if values.isEmpty { EmptyHint(text: emptyText) }
             }
         }
     }
@@ -602,7 +670,7 @@ struct MemoryNotesPanel: View {
             }
             .frame(width: 330)
 
-            GlassCard(title: model.selectedMemoryNote?.title ?? "Preview", systemImage: "doc.richtext") {
+            GlassCard(title: model.selectedMemoryNote?.title ?? model.t("Preview"), systemImage: "doc.richtext") {
                 ScrollView {
                     if model.isLoadingMemoryNote {
                         ProgressView(model.t("Loading memory note"))
@@ -628,8 +696,8 @@ struct ReviewQueuePanel: View {
                     GlassCard {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
-                                Badge(item.riskLevel ?? "risk")
-                                Badge(item.status ?? "pending")
+                                Badge(model.t(item.riskLevel ?? "risk"))
+                                Badge(model.t(item.status ?? "pending"))
                                 Spacer()
                                 Text(item.createdAt ?? "").font(.caption).foregroundStyle(.secondary)
                             }
@@ -639,7 +707,7 @@ struct ReviewQueuePanel: View {
                         }
                     }
                 }
-                if model.reviewItems.isEmpty { EmptyHint(text: "暂无需要人工审核的高风险记忆变更。") }
+                if model.reviewItems.isEmpty { EmptyHint(text: model.t("No high-risk memory changes need manual review.")) }
             }
         }
     }
@@ -663,7 +731,7 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                PageHeader(title: model.t("Settings"), subtitle: "本地优先，DeepSeek key 存入 macOS Keychain。", icon: "gearshape")
+                PageHeader(title: model.t("Settings"), subtitle: model.t("Local-first; DeepSeek keys are stored in macOS Keychain."), icon: "gearshape")
                 GlassCard(title: model.t("Interface"), systemImage: "macwindow") {
                     Form {
                         Picker(model.t("Language"), selection: $model.language) {
@@ -677,9 +745,15 @@ struct SettingsView: View {
                     }
                 }
                 GlassCard(title: model.t("DeepSeek"), systemImage: "key") {
-                    SecureField(model.t("Reading and synthesis API key"), text: $model.readerAPIKeyDraft)
-                    SecureField(model.t("Fast profile-generation API key"), text: $model.flashAPIKeyDraft)
-                    Button(model.t("Save to Keychain")) { model.saveDeepSeekKeys() }
+                    Text(model.t("Saved keys are not displayed here, so opening Settings does not read Keychain. Leave a field blank to keep the saved value."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SecureField(model.t("DeepSeek V4 Pro key for deep reading and memory synthesis"), text: $model.readerAPIKeyDraft)
+                    SecureField(model.t("DeepSeek V4 Flash key for profile generation"), text: $model.flashAPIKeyDraft)
+                    HStack {
+                        Button(model.t("Save to Keychain")) { model.saveDeepSeekKeys() }
+                        Button(model.t("Clear saved keys"), role: .destructive) { model.clearDeepSeekKeys() }
+                    }
                 }
                 GlassCard(title: model.t("Exports"), systemImage: "square.and.arrow.up") {
                     TextField(model.t("Obsidian vault path"), text: $model.obsidianPath)
@@ -692,25 +766,141 @@ struct SettingsView: View {
                     Text(model.t("No Zotero import yet. Export BibTeX, RIS, or CSL JSON from Zotero and choose the export file or folder here. Local PDFs under files/ are read automatically when available."))
                         .foregroundStyle(.secondary)
                     Button(model.t("Choose Zotero Export File or Folder")) { showImporter = true }
+                    if let progress = model.zoteroImportProgress {
+                        WorkflowProgressPanel(
+                            model: model,
+                            title: model.t("Import Progress"),
+                            progress: progress,
+                            phases: ["scanning", "parsing", "reading_pdfs", "saving", "done"]
+                        )
+                    }
                     if !model.zoteroImportCandidates.isEmpty {
-                        Text("\(model.zoteroImportCandidates.count) imported candidates")
+                        Text(String(format: model.t("%d imported candidates"), model.zoteroImportCandidates.count))
                         AsyncButton(title: model.t("Integrate Selected"), systemImage: "brain") { await model.integrateSelectedZoteroPapers() }
                     }
                     if let progress = model.integrationProgress {
-                        ProgressView(value: progress.fraction) { Text(progress.message) }
-                        if let detail = progress.detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+                        WorkflowProgressPanel(
+                            model: model,
+                            title: model.t("Integration Progress"),
+                            progress: progress,
+                            phases: ["preparing", "reading_pdfs", "calling_llm", "writing_memory", "done"]
+                        )
                     }
                 }
             }
         }
-        .onAppear {
-            model.loadDeepSeekKeyDraftsForEditing()
-        }
-        .fileImporter(isPresented: $showImporter, allowedContentTypes: [.item, .folder], allowsMultipleSelection: false) { result in
-            if case .success(let urls) = result, let url = urls.first {
-                Task { await model.importZoteroFile(url) }
+        .fileImporter(isPresented: $showImporter, allowedContentTypes: zoteroImportTypes, allowsMultipleSelection: false) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else {
+                    model.statusLine = model.t("No file was selected.")
+                    return
+                }
+                Task {
+                    let accessGranted = url.startAccessingSecurityScopedResource()
+                    defer {
+                        if accessGranted {
+                            url.stopAccessingSecurityScopedResource()
+                        }
+                    }
+                    await model.importZoteroFile(url)
+                }
+            case .failure(let error):
+                model.statusLine = "\(model.t("Could not choose Zotero export")): \(error.localizedDescription)"
             }
         }
+    }
+
+    private var zoteroImportTypes: [UTType] {
+        var types: [UTType] = [.folder, .item, .data, .json, .plainText]
+        for extensionName in ["bib", "bibtex", "ris", "csljson"] {
+            if let type = UTType(filenameExtension: extensionName) {
+                types.append(type)
+            }
+        }
+        return types
+    }
+}
+
+struct WorkflowProgressPanel: View {
+    @ObservedObject var model: AppViewModel
+    var title: String
+    var progress: IntegrationProgress
+    var phases: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Divider()
+            HStack {
+                Text(title).font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(model.t(progress.phase)).font(.caption).foregroundStyle(.secondary)
+            }
+            if progress.total > 0 && !isIndeterminate {
+                ProgressView(value: progress.fraction) {
+                    Text(model.t(progress.message))
+                } currentValueLabel: {
+                    Text("\(progress.current)/\(progress.total)")
+                }
+            } else {
+                ProgressView {
+                    Text(model.t(progress.message))
+                }
+            }
+            if let detail = progress.detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(phases, id: \.self) { phase in
+                        HStack(spacing: 4) {
+                            Image(systemName: icon(for: phase))
+                                .font(.caption2)
+                            Text(model.t(phase))
+                                .font(.caption2.weight(.medium))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(color(for: phase))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(color(for: phase).opacity(0.12), in: Capsule())
+                    }
+                }
+            }
+        }
+    }
+
+    private var isIndeterminate: Bool {
+        ["scanning", "calling_llm"].contains(progress.phase)
+    }
+
+    private func icon(for phase: String) -> String {
+        if progress.phase == "failed" { return "xmark.circle.fill" }
+        if phaseOrder(phase) < phaseOrder(progress.phase) || progress.phase == "done" {
+            return "checkmark.circle.fill"
+        }
+        if phase == progress.phase {
+            return "clock.fill"
+        }
+        return "circle"
+    }
+
+    private func color(for phase: String) -> Color {
+        if progress.phase == "failed" { return .red }
+        if phase == progress.phase { return .accentColor }
+        if phaseOrder(phase) < phaseOrder(progress.phase) || progress.phase == "done" {
+            return .green
+        }
+        return .secondary
+    }
+
+    private func phaseOrder(_ phase: String) -> Int {
+        if phase == "failed" { return phases.count + 1 }
+        return phases.firstIndex(of: phase) ?? phases.count
     }
 }
 
@@ -794,14 +984,18 @@ struct StatCard: View {
 
 struct Badge: View {
     var text: String
-    init(_ text: String) { self.text = text }
+    var color: Color
+    init(_ text: String, color: Color = .accentColor) {
+        self.text = text
+        self.color = color
+    }
     var body: some View {
         Text(text)
             .font(.caption2.weight(.semibold))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.accentColor.opacity(0.12), in: Capsule())
-            .foregroundStyle(.tint)
+            .background(color.opacity(0.12), in: Capsule())
+            .foregroundStyle(color)
     }
 }
 

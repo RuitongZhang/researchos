@@ -208,6 +208,9 @@ struct Paper: Identifiable, Codable, Hashable {
         return "\(Int((max(0, min(finalScore, 1)) * 100).rounded()))%"
     }
     var isRead: Bool { actions.contains("read") }
+    var isLocalSource: Bool {
+        ["local", "zotero", "demo"].contains(source.lowercased())
+    }
 }
 
 struct PapersResponse: Codable {

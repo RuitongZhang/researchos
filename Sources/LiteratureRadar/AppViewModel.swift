@@ -25,11 +25,13 @@ final class AppViewModel: ObservableObject {
     @Published var zoteroImportCandidates: [Paper] = []
     @Published var selectedZoteroPaperIDs: Set<String> = []
     @Published var integrationProgress: IntegrationProgress?
+    @Published var zoteroImportProgress: IntegrationProgress?
+    @Published var profileGenerationProgress: IntegrationProgress?
     @Published var selectedProfileID: String?
     @Published var searchQuery: String = ""
     @Published var searchMode: String = "relevance"
     @Published var radarSortMode: RadarSortMode = .relevance
-    @Published var useLiveAPIs: Bool = false
+    @Published var useLiveAPIs: Bool = true
     @Published var isBusy: Bool = false
     @Published var statusLine: String
     @Published var obsidianPath: String = "\(NSHomeDirectory())/Documents/LiteratureRadarVault"
@@ -53,7 +55,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private nonisolated let worker = WorkerClient()
-    private var didLoadDeepSeekKeyDrafts = false
+    private var didAttemptInitialOnlineRadar = false
 
     var isIntegratingMemory: Bool {
         if let integrationProgress {
@@ -86,14 +88,18 @@ final class AppViewModel: ObservableObject {
     }
 
     var displayedRadarPapers: [Paper] {
+        let sorted: [Paper]
         switch radarSortMode {
         case .relevance:
-            return papers
+            sorted = papers
         case .time:
-            return papers.sorted {
+            sorted = papers.sorted {
                 ($0.publishedDate ?? $0.updatedDate ?? "") > ($1.publishedDate ?? $1.updatedDate ?? "")
             }
         }
+        let onlineUnread = sorted.filter { !$0.isLocalSource && !$0.isRead }
+        let localSupplements = Array(sorted.filter { $0.isLocalSource }.prefix(5))
+        return onlineUnread + localSupplements
     }
 
     func bootstrap() async {
@@ -104,7 +110,7 @@ final class AppViewModel: ObservableObject {
             try await self.refreshAll()
         }
         if papers.isEmpty {
-            statusLine = t("Initializing local database only. Use Demo or Run Radar after the app opens.")
+            statusLine = t("Open Today Radar to search online papers.")
         }
     }
 
@@ -116,7 +122,7 @@ final class AppViewModel: ObservableObject {
         }
         let paperResponse: PapersResponse = try await worker.run(
             "list-papers",
-            payload: ["profile_id": selectedProfileID ?? "", "limit": 35],
+            payload: ["profile_id": selectedProfileID ?? "", "limit": 120],
             timeout: 15
         )
         papers = paperResponse.papers
@@ -171,6 +177,15 @@ final class AppViewModel: ObservableObject {
             let _: RankResponse = try await self.worker.run("rank", timeout: 30)
             try await self.refreshAll()
         }
+    }
+
+    func ensureRadarHasOnlineCandidates() async {
+        guard !didAttemptInitialOnlineRadar else { return }
+        didAttemptInitialOnlineRadar = true
+        if papers.contains(where: { !$0.isLocalSource && !$0.isRead }) {
+            return
+        }
+        await runRadar()
     }
 
     func runSearch() async {
@@ -241,18 +256,57 @@ final class AppViewModel: ObservableObject {
             statusLine = t("Describe the research direction first.")
             return
         }
-        await runBusy("Generating profile") { [self] in
-            let response: ProfileResponse = try await self.worker.run(
+        let progressURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("litradar-profile-generation-\(UUID().uuidString).json")
+        profileGenerationProgress = IntegrationProgress(
+            phase: "preparing",
+            current: 0,
+            total: 3,
+            message: t("Preparing profile generation"),
+            detail: nil,
+            updatedAt: nil
+        )
+        let progressTask = startProgressPolling(url: progressURL) { [weak self] progress in
+            self?.profileGenerationProgress = progress
+        }
+        isBusy = true
+        statusLine = t("Generating profile")
+        defer {
+            progressTask.cancel()
+            try? FileManager.default.removeItem(at: progressURL)
+            isBusy = false
+        }
+        do {
+            let response: ProfileResponse = try await worker.run(
                 "profile-from-description",
                 payload: [
                     "description": trimmed,
-                    "model": "deepseek-v4-flash"
+                    "model": "deepseek-v4-flash",
+                    "progress_path": progressURL.path
                 ],
                 timeout: 90
             )
-            self.selectedProfileID = response.profile.id
-            try await self.refreshAll()
-            self.statusLine = response.message ?? self.t("Generated profile")
+            selectedProfileID = response.profile.id
+            try await refreshAll()
+            profileGenerationProgress = IntegrationProgress(
+                phase: "done",
+                current: 3,
+                total: 3,
+                message: t("Generated profile"),
+                detail: response.profile.name,
+                updatedAt: nil
+            )
+            statusLine = response.message ?? t("Generated profile")
+        } catch {
+            profileGenerationProgress = IntegrationProgress(
+                phase: "failed",
+                current: profileGenerationProgress?.current ?? 0,
+                total: profileGenerationProgress?.total ?? 3,
+                message: t("Profile generation failed."),
+                detail: error.localizedDescription,
+                updatedAt: nil
+            )
+            statusLine = error.localizedDescription
         }
     }
 
@@ -371,7 +425,7 @@ final class AppViewModel: ObservableObject {
                     "profile_id": self.selectedProfileID ?? ""
                 ]
             )
-            self.statusLine = "Exported \(response.files.count) Obsidian files."
+            self.statusLine = String(format: self.t("Exported %d Obsidian files."), response.files.count)
             try await self.refreshAll()
         }
     }
@@ -387,45 +441,116 @@ final class AppViewModel: ObservableObject {
                     "profile_id": self.selectedProfileID ?? ""
                 ]
             )
-            self.statusLine = "Exported \(response.files.count) Zotero files to \(exportPath)."
+            self.statusLine = String(format: self.t("Exported %d Zotero files to %@."), response.files.count, exportPath)
         }
     }
 
-    func loadDeepSeekKeyDraftsForEditing() {
-        guard !didLoadDeepSeekKeyDrafts else { return }
-        readerAPIKeyDraft = KeychainStore.loadReaderKey()
-        flashAPIKeyDraft = KeychainStore.loadFlashKey()
-        didLoadDeepSeekKeyDrafts = true
-    }
-
     func saveDeepSeekKeys() {
+        let readerKey = readerAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let flashKey = flashAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !readerKey.isEmpty || !flashKey.isEmpty else {
+            statusLine = t("Enter at least one API key to save.")
+            return
+        }
         do {
-            try KeychainStore.saveReaderKey(readerAPIKeyDraft)
-            try KeychainStore.saveFlashKey(flashAPIKeyDraft)
-            didLoadDeepSeekKeyDrafts = true
+            if !readerKey.isEmpty {
+                try KeychainStore.saveReaderKey(readerKey)
+            }
+            if !flashKey.isEmpty {
+                try KeychainStore.saveFlashKey(flashKey)
+            }
+            readerAPIKeyDraft = ""
+            flashAPIKeyDraft = ""
             statusLine = t("DeepSeek keys saved to Keychain.")
         } catch {
-            statusLine = "Could not save key: \(error.localizedDescription)"
+            statusLine = "\(t("Could not save key")): \(error.localizedDescription)"
+        }
+    }
+
+    func clearDeepSeekKeys() {
+        do {
+            try KeychainStore.clearDeepSeekKeys()
+            readerAPIKeyDraft = ""
+            flashAPIKeyDraft = ""
+            statusLine = t("DeepSeek key cleared.")
+        } catch {
+            statusLine = "\(t("Could not clear key")): \(error.localizedDescription)"
         }
     }
 
     func importZoteroFile(_ url: URL) async {
-        await runBusy("Importing Zotero export") { [self] in
+        let progressURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("litradar-zotero-import-\(UUID().uuidString).json")
+        zoteroImportProgress = IntegrationProgress(
+            phase: "scanning",
+            current: 0,
+            total: 0,
+            message: t("Scanning Zotero export"),
+            detail: url.path,
+            updatedAt: nil
+        )
+        let progressTask = startProgressPolling(url: progressURL) { [weak self] progress in
+            self?.zoteroImportProgress = progress
+        }
+        isBusy = true
+        statusLine = t("Importing Zotero export")
+        defer {
+            progressTask.cancel()
+            try? FileManager.default.removeItem(at: progressURL)
+            isBusy = false
+        }
+        do {
             let response: PapersResponse = try await self.worker.run(
                 "zotero-import",
-                payload: ["path": url.path],
+                payload: [
+                    "path": url.path,
+                    "progress_path": progressURL.path
+                ],
                 timeout: 120
             )
+            guard !response.papers.isEmpty else {
+                self.zoteroImportCandidates = []
+                self.selectedZoteroPaperIDs = []
+                self.statusLine = self.t("No Zotero items found in the selected path.")
+                self.zoteroImportProgress = IntegrationProgress(
+                    phase: "failed",
+                    current: 0,
+                    total: 0,
+                    message: self.t("No Zotero items found in the selected path."),
+                    detail: url.path,
+                    updatedAt: nil
+                )
+                return
+            }
             self.zoteroImportCandidates = response.papers
             self.selectedZoteroPaperIDs = Set(response.papers.map(\.id))
             try await self.refreshAll()
+            self.zoteroImportProgress = IntegrationProgress(
+                phase: "done",
+                current: response.papers.count,
+                total: response.papers.count,
+                message: String(format: self.t("Imported %d Zotero papers."), response.papers.count),
+                detail: url.path,
+                updatedAt: nil
+            )
+            self.statusLine = String(format: self.t("Imported %d Zotero papers."), response.papers.count)
+        } catch {
+            self.zoteroImportProgress = IntegrationProgress(
+                phase: "failed",
+                current: zoteroImportProgress?.current ?? 0,
+                total: zoteroImportProgress?.total ?? 0,
+                message: self.t("Zotero import failed."),
+                detail: error.localizedDescription,
+                updatedAt: nil
+            )
+            statusLine = error.localizedDescription
         }
     }
 
     func integrateSelectedZoteroPapers() async {
         let selected = Array(selectedZoteroPaperIDs)
         guard !selected.isEmpty else {
-            statusLine = "Select at least one imported paper."
+            statusLine = t("Select at least one imported paper.")
             return
         }
         let progressURL = FileManager.default.temporaryDirectory
@@ -438,7 +563,9 @@ final class AppViewModel: ObservableObject {
             detail: nil,
             updatedAt: nil
         )
-        let progressTask = startIntegrationProgressPolling(url: progressURL)
+        let progressTask = startProgressPolling(url: progressURL) { [weak self] progress in
+            self?.integrationProgress = progress
+        }
         isBusy = true
         statusLine = t("Integrating Zotero papers")
         do {
@@ -481,13 +608,13 @@ final class AppViewModel: ObservableObject {
         isBusy = false
     }
 
-    private func startIntegrationProgressPolling(url: URL) -> Task<Void, Never> {
-        Task { [weak self] in
+    private func startProgressPolling(url: URL, update: @escaping @MainActor (IntegrationProgress) -> Void) -> Task<Void, Never> {
+        Task {
             let decoder = JSONDecoder()
             while !Task.isCancelled {
                 if let data = try? Data(contentsOf: url),
                    let progress = try? decoder.decode(IntegrationProgress.self, from: data) {
-                    self?.integrationProgress = progress
+                    update(progress)
                 }
                 try? await Task.sleep(nanoseconds: 500_000_000)
             }

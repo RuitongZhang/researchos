@@ -72,7 +72,7 @@ class WorkerCase(unittest.TestCase):
     def test_usefulness_requires_reader_key_before_writing(self):
         self.run_worker("init", {"seed_demo": True})
         out = self.run_worker("usefulness", {"paper_id": "demo_graph_agent_memory", "profile_id": "default_profile"}, expect_ok=False)
-        self.assertIn("DeepSeek reader API key is required", out["error"])
+        self.assertIn("DeepSeek V4 Pro API key is required", out["error"])
         notes = self.run_worker("memory-list")
         self.assertEqual(notes["notes"], [])
         read = self.run_worker("read-papers")
@@ -81,7 +81,7 @@ class WorkerCase(unittest.TestCase):
     def test_profile_generation_requires_api_key(self):
         self.run_worker("init", {"seed_demo": True})
         out = self.run_worker("profile-from-description", {"description": "agent memory and GraphRAG"}, expect_ok=False)
-        self.assertIn("DeepSeek API key is required", out["error"])
+        self.assertIn("DeepSeek V4 Flash API key is required", out["error"])
 
     def test_feedback_updates_interest_and_events(self):
         self.run_worker("init", {"seed_demo": True})
@@ -127,8 +127,10 @@ class WorkerCase(unittest.TestCase):
 """.strip(),
             encoding="utf-8",
         )
-        imported = self.run_worker("zotero-import", {"path": str(export_dir)})
+        import_progress = self.tmp / "import-progress.json"
+        imported = self.run_worker("zotero-import", {"path": str(export_dir), "progress_path": str(import_progress)})
         self.assertEqual(imported["count"], 1)
+        self.assertEqual(json.loads(import_progress.read_text(encoding="utf-8"))["phase"], "done")
         paper_id = imported["papers"][0]["id"]
         self.assertTrue(imported["papers"][0]["pdf_path"].endswith("Bergen 2020 scVelo.pdf"))
         out = self.run_worker(
@@ -136,12 +138,75 @@ class WorkerCase(unittest.TestCase):
             {"paper_ids": [paper_id], "profile_id": "default_profile", "progress_path": str(self.tmp / "progress.json")},
             expect_ok=False,
         )
-        self.assertIn("DeepSeek reader API key is required", out["error"])
+        self.assertIn("DeepSeek V4 Pro API key is required", out["error"])
         progress = json.loads((self.tmp / "progress.json").read_text(encoding="utf-8"))
         self.assertEqual(progress["phase"], "failed")
         self.assertEqual(progress["completed"], 0)
         read = self.run_worker("read-papers")
         self.assertEqual(read["papers"], [])
+
+    def test_zotero_import_direct_bib_handles_nested_braces_and_multiple_files(self):
+        self.run_worker("init", {"seed_demo": True})
+        export_dir = self.tmp / "zotero-direct"
+        pdf_dir = export_dir / "files" / "ABC"
+        pdf_dir.mkdir(parents=True)
+        (pdf_dir / "Nested Title Paper.pdf").write_text("pdf text", encoding="utf-8")
+        bib = export_dir / "export.bib"
+        bib.write_text(
+            """
+@article{demo_nested_2024,
+  title = {{GraphRAG} for {Long-Term} Agent Memory},
+  author = {Zhang, Rui and Smith, Ada},
+  date = {2024-03-01},
+  abstract = {A Zotero export with nested braces should still import.},
+  file = {Snapshot:/tmp/not-a-paper.html:text/html;Full Text:files/ABC/Nested Title Paper.pdf:application/pdf}
+}
+""".strip(),
+            encoding="utf-8",
+        )
+
+        imported = self.run_worker("zotero-import", {"path": str(bib)})
+        self.assertEqual(imported["count"], 1)
+        paper = imported["papers"][0]
+        self.assertEqual(paper["title"], "GraphRAG for Long-Term Agent Memory")
+        self.assertEqual(paper["published_date"], "2024")
+        self.assertTrue(paper["pdf_path"].endswith("Nested Title Paper.pdf"))
+
+    def test_zotero_import_updates_existing_doi_without_unique_conflict(self):
+        self.run_worker("init", {"seed_demo": False})
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            worker.upsert_paper(
+                conn,
+                {
+                    "id": "manual_existing",
+                    "source": "local",
+                    "doi": "10.5555/existing",
+                    "title": "Old local title",
+                    "abstract": "already here",
+                    "authors": [],
+                },
+            )
+            conn.execute("CREATE UNIQUE INDEX idx_test_papers_doi ON papers(doi)")
+            conn.commit()
+
+        bib = self.tmp / "duplicate-doi.bib"
+        bib.write_text(
+            """
+@article{new_export,
+  title = {Updated Zotero title},
+  author = {Zotero, Export},
+  year = {2026},
+  doi = {https://doi.org/10.5555/existing},
+  abstract = {This should update the old DOI row instead of inserting another row.}
+}
+""".strip(),
+            encoding="utf-8",
+        )
+        imported = self.run_worker("zotero-import", {"path": str(bib)})
+        self.assertEqual(imported["count"], 1)
+        self.assertEqual(imported["papers"][0]["id"], "manual_existing")
+        self.assertEqual(imported["papers"][0]["title"], "Updated Zotero title")
 
 
 if __name__ == "__main__":

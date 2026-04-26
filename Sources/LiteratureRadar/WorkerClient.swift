@@ -67,17 +67,7 @@ final class WorkerClient: Sendable {
         var environment = ProcessInfo.processInfo.environment
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         environment["PYTHONUNBUFFERED"] = "1"
-        if needsDeepSeekKeys(for: command) {
-            let readerKey = KeychainStore.loadReaderKey()
-            if !readerKey.isEmpty {
-                environment["DEEPSEEK_READER_API_KEY"] = readerKey
-                environment["DEEPSEEK_API_KEY"] = readerKey
-            }
-            let flashKey = KeychainStore.loadFlashKey()
-            if !flashKey.isEmpty {
-                environment["DEEPSEEK_FLASH_API_KEY"] = flashKey
-            }
-        }
+        addDeepSeekKeysIfNeeded(for: command, to: &environment)
         process.environment = environment
 
         let stdinPipe = Pipe()
@@ -135,6 +125,24 @@ final class WorkerClient: Sendable {
         return output
     }
 
+    private static func addDeepSeekKeysIfNeeded(for command: String, to environment: inout [String: String]) {
+        switch command {
+        case "profile-from-description":
+            let flashKey = KeychainStore.loadFlashKey()
+            if !flashKey.isEmpty {
+                environment["DEEPSEEK_FLASH_API_KEY"] = flashKey
+            }
+        case "usefulness", "synthesize", "integrate-papers":
+            let readerKey = KeychainStore.loadReaderKey()
+            if !readerKey.isEmpty {
+                environment["DEEPSEEK_READER_API_KEY"] = readerKey
+                environment["DEEPSEEK_API_KEY"] = readerKey
+            }
+        default:
+            break
+        }
+    }
+
     private static func workerURL() throws -> URL {
         let mainBundle = Bundle.main
         let resourceRoot = mainBundle.resourceURL
@@ -153,15 +161,6 @@ final class WorkerClient: Sendable {
             return candidate
         }
         throw WorkerClientError.missingWorker
-    }
-
-    private static func needsDeepSeekKeys(for command: String) -> Bool {
-        [
-            "profile-from-description",
-            "usefulness",
-            "synthesize",
-            "integrate-papers"
-        ].contains(command)
     }
 
     private static func pythonInvocation() -> (executable: URL, argumentsPrefix: [String]) {

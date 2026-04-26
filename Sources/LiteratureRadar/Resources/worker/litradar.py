@@ -78,6 +78,15 @@ def normalize_ws(text: str | None) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
+def normalize_doi(value: str | None) -> str:
+    text = normalize_ws(value)
+    if not text:
+        return ""
+    text = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", text, flags=re.I)
+    text = re.sub(r"^doi:\s*", "", text, flags=re.I)
+    return text.strip(" .;,").lower()
+
+
 def tokenize(text: str | None) -> list[str]:
     return [w.lower() for w in re.findall(r"[A-Za-z0-9][A-Za-z0-9_+\-\.]{1,}", text or "")]
 
@@ -758,11 +767,24 @@ def row_to_memory(row: sqlite3.Row, include_content: bool = True) -> dict[str, A
 
 def upsert_paper(conn: sqlite3.Connection, data: dict[str, Any]) -> str:
     now = utcnow()
-    doi = normalize_ws(data.get("doi")) or None
+    doi = normalize_doi(data.get("doi")) or None
     arxiv_id = normalize_ws(data.get("arxiv_id") or data.get("arxivId")) or None
     title = normalize_ws(data.get("title")) or "Untitled"
     abstract = normalize_ws(data.get("abstract"))
-    if data.get("id"):
+
+    paper_id = None
+    if doi:
+        row = conn.execute("SELECT id FROM papers WHERE doi = ? COLLATE NOCASE", (doi,)).fetchone()
+        if row:
+            paper_id = row["id"]
+    if paper_id is None and arxiv_id:
+        row = conn.execute("SELECT id FROM papers WHERE arxiv_id = ? COLLATE NOCASE", (arxiv_id,)).fetchone()
+        if row:
+            paper_id = row["id"]
+
+    if paper_id is not None:
+        pass
+    elif data.get("id"):
         paper_id = str(data["id"])
     elif doi:
         paper_id = stable_id("paper", doi.lower())
@@ -856,7 +878,7 @@ def get_reader_key() -> str | None:
 
 
 def get_flash_key() -> str | None:
-    return os.environ.get("DEEPSEEK_FLASH_API_KEY") or get_reader_key()
+    return os.environ.get("DEEPSEEK_FLASH_API_KEY")
 
 
 def call_deepseek(
@@ -866,6 +888,8 @@ def call_deepseek(
     api_key: str,
     timeout: int = 120,
     temperature: float = 0.1,
+    thinking: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> str:
     body = {
         "model": model,
@@ -873,6 +897,10 @@ def call_deepseek(
         "temperature": temperature,
         "response_format": {"type": "json_object"},
     }
+    if thinking:
+        body["thinking"] = {"type": thinking}
+    if reasoning_effort:
+        body["reasoning_effort"] = reasoning_effort
     req = urllib.request.Request(
         DEEPSEEK_URL,
         data=json.dumps(body).encode("utf-8"),
@@ -1477,47 +1505,148 @@ def parse_ris(text: str, base_dir: Path | None = None) -> list[dict[str, Any]]:
     return items
 
 
+def bib_entries(text: str) -> list[str]:
+    entries: list[str] = []
+    i = 0
+    while True:
+        start = text.find("@", i)
+        if start < 0:
+            break
+        brace = text.find("{", start)
+        if brace < 0:
+            break
+        depth = 0
+        in_quote = False
+        escaped = False
+        j = brace
+        while j < len(text):
+            ch = text[j]
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"' and depth > 0:
+                in_quote = not in_quote
+            elif not in_quote:
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        entries.append(text[start : j + 1])
+                        i = j + 1
+                        break
+            j += 1
+        else:
+            entries.append(text[start:])
+            break
+    return entries
+
+
+def parse_bib_fields(entry: str) -> dict[str, str]:
+    open_brace = entry.find("{")
+    close_brace = entry.rfind("}")
+    if open_brace < 0 or close_brace <= open_brace:
+        return {}
+    body = entry[open_brace + 1 : close_brace]
+    first_comma = body.find(",")
+    if first_comma < 0:
+        return {}
+    text = body[first_comma + 1 :]
+    fields: dict[str, str] = {}
+    i = 0
+    while i < len(text):
+        while i < len(text) and text[i] in " \t\r\n,":
+            i += 1
+        key_start = i
+        while i < len(text) and re.match(r"[A-Za-z0-9_\-]", text[i]):
+            i += 1
+        key = text[key_start:i].strip().lower()
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if not key or i >= len(text) or text[i] != "=":
+            i += 1
+            continue
+        i += 1
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if i >= len(text):
+            break
+        if text[i] == "{":
+            i += 1
+            value_start = i
+            depth = 1
+            while i < len(text) and depth > 0:
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i += 1
+            value = text[value_start:i]
+            i += 1
+        elif text[i] == '"':
+            i += 1
+            value_start = i
+            escaped = False
+            while i < len(text):
+                if escaped:
+                    escaped = False
+                elif text[i] == "\\":
+                    escaped = True
+                elif text[i] == '"':
+                    break
+                i += 1
+            value = text[value_start:i]
+            i += 1
+        else:
+            value_start = i
+            while i < len(text) and text[i] != ",":
+                i += 1
+            value = text[value_start:i]
+        fields[key] = normalize_ws(value.replace("{", "").replace("}", ""))
+    return fields
+
+
+def extract_zotero_pdf_path(value: str) -> str | None:
+    clean = urllib.parse.unquote(value)
+    candidates = re.findall(r"(?:file://)?/[^:;{}]+?\.pdf|[^:;{}]*files/[^:;{}]+?\.pdf|[^:;{}]+?\.pdf", clean, flags=re.I)
+    if not candidates:
+        return None
+    preferred = [c for c in candidates if "/" in c or c.startswith("file://")]
+    return (preferred or candidates)[-1].strip()
+
+
 def parse_bib(text: str, base_dir: Path | None = None) -> list[dict[str, Any]]:
-    entries = re.split(r"\n\s*@", "\n" + text)
+    entries = bib_entries(text)
     items: list[dict[str, Any]] = []
     for entry in entries:
         if not entry.strip():
             continue
         data: dict[str, Any] = {"source": "zotero"}
-        for key, value in re.findall(r"(title|doi|journal|author|year|abstract|url|file)\s*=\s*[\{\"](.*?)[\}\"]\s*,", entry, flags=re.I | re.S):
-            clean = normalize_ws(value.replace("{", "").replace("}", ""))
-            lk = key.lower()
-            if lk == "title":
-                data["title"] = clean
-            elif lk == "doi":
-                data["doi"] = clean
-            elif lk == "author":
-                data["authors"] = [normalize_ws(a) for a in re.split(r"\s+and\s+", clean) if normalize_ws(a)]
-            elif lk == "year":
-                data["published_date"] = clean[:4]
-            elif lk == "abstract":
-                data["abstract"] = clean
-            elif lk == "url":
-                data["url"] = clean
-            elif lk == "file":
-                pieces = clean.split(":")
-                pdfs = [p for p in pieces if p.lower().endswith(".pdf") or "/files/" in p]
-                if pdfs:
-                    resolved = resolve_zotero_path(pdfs[-1], base_dir)
-                    data["pdf_url"] = resolved
-                    if not re.match(r"^https?://", resolved):
-                        data["pdf_path"] = resolved
-        if not data.get("pdf_url"):
-            file_match = re.search(r"file\s*=\s*[\{\"](.*?)[\}\"]\s*(?:,|\n\s*\})", entry, flags=re.I | re.S)
-            if file_match:
-                clean_file = normalize_ws(file_match.group(1).replace("{", "").replace("}", ""))
-                pieces = clean_file.split(":")
-                pdfs = [part for part in pieces if part.lower().endswith(".pdf") or "/files/" in part or "files/" in part]
-                if pdfs:
-                    resolved = resolve_zotero_path(pdfs[-1], base_dir)
-                    data["pdf_url"] = resolved
-                    if not re.match(r"^https?://", resolved):
-                        data["pdf_path"] = resolved
+        fields = parse_bib_fields(entry)
+        if fields.get("title"):
+            data["title"] = fields["title"]
+        if fields.get("doi"):
+            data["doi"] = fields["doi"]
+        if fields.get("author"):
+            data["authors"] = [normalize_ws(a) for a in re.split(r"\s+and\s+", fields["author"]) if normalize_ws(a)]
+        if fields.get("year"):
+            data["published_date"] = fields["year"][:4]
+        elif fields.get("date"):
+            data["published_date"] = fields["date"][:4]
+        if fields.get("abstract"):
+            data["abstract"] = fields["abstract"]
+        if fields.get("url"):
+            data["url"] = fields["url"]
+        if fields.get("file"):
+            pdf = extract_zotero_pdf_path(fields["file"])
+            if pdf:
+                resolved = resolve_zotero_path(pdf, base_dir)
+                data["pdf_url"] = resolved
+                if not re.match(r"^https?://", resolved):
+                    data["pdf_path"] = resolved
         if data.get("title"):
             data.setdefault("abstract", "")
             data.setdefault("authors", [])
@@ -1526,7 +1655,7 @@ def parse_bib(text: str, base_dir: Path | None = None) -> list[dict[str, Any]]:
 
 
 def resolve_zotero_path(value: str, base_dir: Path | None) -> str:
-    value = value.strip()
+    value = urllib.parse.unquote(value.strip())
     if value.startswith("file://") or re.match(r"^https?://", value):
         return value
     path = Path(value)
@@ -1537,13 +1666,19 @@ def resolve_zotero_path(value: str, base_dir: Path | None) -> str:
     return value
 
 
-def zotero_import_items(path: Path) -> list[dict[str, Any]]:
+def zotero_export_files(path: Path) -> list[Path]:
+    suffixes = {".ris", ".bib", ".bibtex", ".json", ".csljson"}
     if path.is_dir():
-        files = []
-        for pattern in ["*.ris", "*.bib", "*.json"]:
-            files.extend(path.glob(pattern))
+        return sorted(f for f in path.rglob("*") if f.is_file() and f.suffix.lower() in suffixes)
+    return [path] if path.is_file() and path.suffix.lower() in suffixes else []
+
+
+def zotero_import_items(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        raise WorkerError(f"Zotero export path does not exist: {path}")
+    if path.is_dir():
         items: list[dict[str, Any]] = []
-        for f in files:
+        for f in zotero_export_files(path):
             items.extend(zotero_import_items(f))
         return items
     text = path.read_text(encoding="utf-8", errors="ignore")
@@ -1551,7 +1686,7 @@ def zotero_import_items(path: Path) -> list[dict[str, Any]]:
         return parse_ris(text, path.parent)
     if path.suffix.lower() in {".bib", ".bibtex"}:
         return parse_bib(text, path.parent)
-    if path.suffix.lower() == ".json":
+    if path.suffix.lower() in {".json", ".csljson"}:
         data = json.loads(text)
         if isinstance(data, dict):
             data = [data]
@@ -1876,7 +2011,7 @@ def cmd_usefulness(db: Database, payload: dict[str, Any]) -> dict[str, Any]:
     db.init(False)
     api_key = get_reader_key()
     if not api_key:
-        raise WorkerError("DeepSeek reader API key is required before writing long-term memory.")
+        raise WorkerError("DeepSeek V4 Pro API key is required before writing long-term memory.")
     paper_id = payload.get("paper_id")
     profile_id = payload.get("profile_id") or db.ensure_default_profile()
     if not paper_id:
@@ -1901,6 +2036,8 @@ def cmd_usefulness(db: Database, payload: dict[str, Any]) -> dict[str, Any]:
         api_key=api_key,
         messages=[{"role": "system", "content": prompt}, {"role": "user", "content": json.dumps(content, ensure_ascii=False)}],
         timeout=150,
+        thinking="enabled",
+        reasoning_effort="high",
     )
     analysis = parse_json_text(text)
     markdown = analysis.get("markdown") or f"# Usefulness: {paper['title']}\n\n{analysis.get('one_sentence', '')}"
@@ -1932,7 +2069,7 @@ def cmd_synthesize(db: Database, payload: dict[str, Any]) -> dict[str, Any]:
     db.init(False)
     api_key = get_reader_key()
     if not api_key:
-        raise WorkerError("DeepSeek reader API key is required before writing long-term memory.")
+        raise WorkerError("DeepSeek V4 Pro API key is required before writing long-term memory.")
     profile_id = payload.get("profile_id") or db.ensure_default_profile()
     model = payload.get("model") or DEFAULT_READER_MODEL
     notes = [row_to_memory(r, True) for r in db.conn.execute("SELECT * FROM memory_notes WHERE profile_id=? ORDER BY updated_at DESC LIMIT 24", (profile_id,)).fetchall()]
@@ -1943,6 +2080,8 @@ def cmd_synthesize(db: Database, payload: dict[str, Any]) -> dict[str, Any]:
         api_key=api_key,
         messages=[{"role": "system", "content": prompt}, {"role": "user", "content": jdump({"notes": notes, "dashboard": dashboard})}],
         timeout=150,
+        thinking="enabled",
+        reasoning_effort="high",
     )
     data = parse_json_text(text)
     markdown = data.get("markdown") or "# Weekly Research Memory Digest\n\nNo synthesis returned."
@@ -2069,16 +2208,28 @@ def render_bib(papers: list[dict[str, Any]]) -> str:
 
 def cmd_profile_from_description(db: Database, payload: dict[str, Any]) -> dict[str, Any]:
     db.init(False)
+    progress_path = payload.get("progress_path")
+    write_progress(progress_path, "preparing", 0, 3, "Preparing profile generation")
     api_key = get_flash_key()
     if not api_key:
-        raise WorkerError("DeepSeek API key is required for profile generation.")
+        write_progress(progress_path, "failed", 0, 3, "Profile generation failed.", "DeepSeek V4 Flash API key is required for profile generation.")
+        raise WorkerError("DeepSeek V4 Flash API key is required for profile generation.")
     desc = normalize_ws(payload.get("description"))
     if not desc:
+        write_progress(progress_path, "failed", 0, 3, "Profile generation failed.", "description is required")
         raise WorkerError("description is required")
     prompt = load_prompt("profile_from_description.md", "Convert natural language research direction to strict JSON search profile.")
     model = payload.get("model") or DEFAULT_FLASH_MODEL
-    text = call_deepseek(model=model, api_key=api_key, messages=[{"role": "system", "content": prompt}, {"role": "user", "content": desc}], timeout=90)
+    write_progress(progress_path, "calling_llm", 1, 3, "Calling DeepSeek V4 Flash", model)
+    text = call_deepseek(
+        model=model,
+        api_key=api_key,
+        messages=[{"role": "system", "content": prompt}, {"role": "user", "content": desc}],
+        timeout=90,
+        thinking="disabled",
+    )
     data = parse_json_text(text)
+    write_progress(progress_path, "saving", 2, 3, "Saving generated profile", data.get("name") or "Generated Profile")
     save_payload = {
         "name": data.get("name") or "Generated Profile",
         "weight": 1.0,
@@ -2092,23 +2243,46 @@ def cmd_profile_from_description(db: Database, payload: dict[str, Any]) -> dict[
     }
     result = cmd_profile_upsert(db, save_payload)
     result["message"] = data.get("rationale") or "Generated profile"
+    write_progress(progress_path, "done", 3, 3, "Generated profile", result.get("profile", {}).get("name"))
     return result
 
 
 def cmd_zotero_import(db: Database, payload: dict[str, Any]) -> dict[str, Any]:
     db.init(False)
     path = payload.get("path")
+    progress_path = payload.get("progress_path")
     if not path:
         raise WorkerError("path is required")
-    items = zotero_import_items(Path(path).expanduser())
+    source_path = Path(path).expanduser()
+    write_progress(progress_path, "scanning", 0, 0, "Scanning Zotero export", str(source_path))
+    files = zotero_export_files(source_path)
+    if not files:
+        write_progress(progress_path, "failed", 0, 0, "No Zotero items found in the selected path.", str(source_path))
+        raise WorkerError("No Zotero items found in the selected path. Choose a BibTeX, RIS, CSL JSON file, or the folder that contains one.")
+    items: list[dict[str, Any]] = []
+    for idx, file_path in enumerate(files, start=1):
+        write_progress(progress_path, "parsing", idx - 1, len(files), "Parsing Zotero export", str(file_path))
+        items.extend(zotero_import_items(file_path))
+        write_progress(progress_path, "parsing", idx, len(files), "Parsing Zotero export", str(file_path))
+    if not items:
+        write_progress(progress_path, "failed", 0, 0, "No Zotero items found in the selected path.", str(source_path))
+        raise WorkerError("No Zotero items found in the selected path. Choose a BibTeX, RIS, CSL JSON file, or the folder that contains one.")
     papers = []
-    for item in items:
+    seen_paper_ids: set[str] = set()
+    for idx, item in enumerate(items, start=1):
         item.setdefault("abstract", "")
+        write_progress(progress_path, "reading_pdfs", idx - 1, len(items), "Reading Zotero PDFs", item.get("title"))
         pid = upsert_paper(db.conn, item)
-        ensure_paper_chunk(db.conn, pid, item.get("abstract") or read_pdf_or_text(item.get("pdf_url"), 2000), source="zotero")
-        row = db.conn.execute("SELECT * FROM papers WHERE id=?", (pid,)).fetchone()
-        papers.append(row_to_paper(db.conn, row))
+        text = item.get("abstract") or read_pdf_or_text(item.get("pdf_url"), 2000)
+        ensure_paper_chunk(db.conn, pid, text, source="zotero")
+        if pid not in seen_paper_ids:
+            row = db.conn.execute("SELECT * FROM papers WHERE id=?", (pid,)).fetchone()
+            papers.append(row_to_paper(db.conn, row))
+            seen_paper_ids.add(pid)
+        write_progress(progress_path, "reading_pdfs", idx, len(items), "Reading Zotero PDFs", item.get("title"))
+    write_progress(progress_path, "saving", len(papers), len(items), "Saving imported papers", str(source_path))
     db.conn.commit()
+    write_progress(progress_path, "done", len(papers), len(papers), "Zotero import complete.", str(source_path))
     return success({"count": len(papers), "papers": papers})
 
 
@@ -2129,8 +2303,8 @@ def cmd_integrate_papers(db: Database, payload: dict[str, Any]) -> dict[str, Any
     write_progress(progress_path, "preparing", 0, total, "Preparing long-term memory integration")
     api_key = get_reader_key()
     if not api_key:
-        write_progress(progress_path, "failed", 0, total, "Long-term memory integration failed.", "DeepSeek reader API key is required before writing long-term memory.")
-        raise WorkerError("DeepSeek reader API key is required before writing long-term memory.")
+        write_progress(progress_path, "failed", 0, total, "Long-term memory integration failed.", "DeepSeek V4 Pro API key is required before writing long-term memory.")
+        raise WorkerError("DeepSeek V4 Pro API key is required before writing long-term memory.")
     model = payload.get("model") or DEFAULT_READER_MODEL
     papers = []
     for i, pid in enumerate(paper_ids, start=1):
@@ -2138,16 +2312,20 @@ def cmd_integrate_papers(db: Database, payload: dict[str, Any]) -> dict[str, Any
         if not row:
             continue
         paper = row_to_paper(db.conn, row, profile_id)
+        write_progress(progress_path, "reading_pdfs", i - 1, total, "Reading PDFs before LLM synthesis", paper.get("title"))
         pdf_text = read_pdf_or_text(paper.get("pdf_url"), max_chars=9000)
         paper["pdf_excerpt"] = pdf_text or paper.get("abstract") or ""
         papers.append(paper)
-        write_progress(progress_path, "reading", i - 1, total, f"Queued {paper['title']}")
+        write_progress(progress_path, "reading_pdfs", i, total, "Reading PDFs before LLM synthesis", paper.get("title"))
     prompt = load_prompt("zotero_batch_synthesis.md", "Integrate papers into strict JSON layered memory.")
+    write_progress(progress_path, "calling_llm", 0, 0, "Calling DeepSeek V4 Pro", f"{len(papers)} papers")
     text = call_deepseek(
         model=model,
         api_key=api_key,
         messages=[{"role": "system", "content": prompt}, {"role": "user", "content": jdump({"papers": papers, "profile_id": profile_id})}],
         timeout=300,
+        thinking="enabled",
+        reasoning_effort="high",
     )
     analysis = parse_json_text(text)
     markdown = analysis.get("markdown") or "# Zotero Integration\n\nNo markdown returned."
@@ -2165,13 +2343,14 @@ def cmd_integrate_papers(db: Database, payload: dict[str, Any]) -> dict[str, Any
         (note_id, profile_id, f"Zotero Integration: {now[:10]}", path, markdown, jdump(analysis), now, now),
     )
     for idx, paper in enumerate(papers, start=1):
-        write_progress(progress_path, "integrating", idx, total, f"Integrating {paper['title']}")
+        write_progress(progress_path, "writing_memory", idx - 1, max(1, len(papers)), "Writing memory graph", paper.get("title"))
         for action in ["save", "read"]:
             db.conn.execute("INSERT OR IGNORE INTO paper_actions (profile_id, paper_id, action, created_at) VALUES (?, ?, ?, ?)", (profile_id, paper["id"], action, now))
         per_paper_analysis = local_analysis(paper, None)
         # Merge batch-level hints so every paper produces graph/evidence nodes.
         per_paper_analysis.update({k: analysis.get(k) for k in ["shared_threads", "claim_evidence_candidates", "open_questions"] if k in analysis})
         extract_structured_memory(db.conn, profile_id, paper, per_paper_analysis, model)
+        write_progress(progress_path, "writing_memory", idx, max(1, len(papers)), "Writing memory graph", paper.get("title"))
     db.conn.commit()
     db.rank_all([profile_id])
     write_progress(progress_path, "done", total, total, "Long-term memory integration complete.")
