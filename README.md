@@ -1,6 +1,8 @@
-# LiteratureRadar
+# ResearchOS
 
-LiteratureRadar is a local-first macOS research radar for tracking arXiv and bioRxiv papers, ranking them against multiple research profiles, and exporting long-term memory notes to Obsidian plus citation files for Zotero.
+ResearchOS is a local-first macOS research radar for tracking arXiv and bioRxiv papers, ranking them against multiple research profiles, and exporting long-term memory notes to Obsidian plus citation files for Zotero.
+
+
 
 ## Current shape
 
